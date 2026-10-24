@@ -1,0 +1,113 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      return isAuthenticated() &&
+        (request.auth.token.email == "harshsharma18089@gmail.com" ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "OWNER" ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "ADMIN");
+    }
+
+    function isStaff() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "STAFF" ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isStaffActive == true ||
+         isOwner());
+    }
+
+    // User profiles & subcollections rule
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId
+        && (!request.resource.data.keys().hasAny(['role']) || request.resource.data.role == 'USER');
+      allow update: if isAuthenticated() && (
+        (request.auth.uid == userId && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isStaffActive', 'isCounsellor', 'uid']))) ||
+        isOwner()
+      );
+      allow delete: if isAuthenticated() && (request.auth.uid == userId || isOwner());
+
+      match /{subcollection}/{document=**} {
+        allow read, write: if isAuthenticated() && (request.auth.uid == userId || isOwner());
+      }
+    }
+
+    // Community posts
+    match /community_posts/{postId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isOwner());
+    }
+
+    // Authorized Team Staff directory
+    match /team_staff/{staffId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner();
+    }
+
+    // Support Tickets & Messages
+    match /support_tickets/{ticketId} {
+      allow read, write: if isAuthenticated() &&
+        (resource == null || resource.data.userId == request.auth.uid || isStaff());
+
+      match /messages/{messageId} {
+        allow read, write: if isAuthenticated() &&
+          (get(/databases/$(database)/documents/support_tickets/$(ticketId)).data.userId == request.auth.uid || isStaff());
+      }
+    }
+
+    // Support Rooms
+    match /support_rooms/{roomId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner();
+    }
+
+    // Announcements
+    match /announcements/{announcementId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner();
+    }
+
+    // Global App Configuration
+    match /app_config/{configId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner();
+    }
+
+    // Configuration History & Rollback
+    match /config_history/{historyId} {
+      allow read, write: if isOwner();
+    }
+
+    // User Feedback & Suggestions
+    match /feedback_items/{feedbackId} {
+      allow create: if isAuthenticated();
+      allow read, write: if isOwner();
+    }
+
+    // Security Center & Alerts
+    match /security_alerts/{alertId} {
+      allow read, write: if isOwner();
+    }
+
+    // Abuse & Safety Reports
+    match /abuse_reports/{reportId} {
+      allow create: if isAuthenticated();
+      allow read, write: if isStaff();
+    }
+
+    // Admin Audit Logs (Append-Only Audit Trail)
+    match /admin_audit_logs/{logId} {
+      allow read, write: if isOwner();
+    }
+
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
